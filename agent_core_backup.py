@@ -47,7 +47,7 @@ load_dotenv()
 
 # ── Client ────────────────────────────────────────────────────────────────────
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.5-flash-lite"
+MODEL = "gemini-2.0-flash"  # Use the latest Gemini 2.0 Flash model for best performance
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -555,19 +555,10 @@ async def run_agent(
 
     for iteration in range(12):
 
-        if not response.candidates:
-            print(f"  [debug] no candidates returned, prompt_feedback: {response.prompt_feedback}")
-            parts = []
-        else:
-            content = response.candidates[0].content
-            if content is None or not content.parts:
-                print(f"  [debug] empty content, finish_reason: {response.candidates[0].finish_reason}")
-                parts = []
-            else:
-                parts = content.parts
+        parts = response.candidates[0].content.parts
 
         # ── Check if Gemini is done (no function calls in response) ───────────
-        has_tool_call = any(getattr(part, "function_call", None) and part.function_call.name for part in parts)
+        has_tool_call = any(hasattr(part, "function_call") and part.function_call.name for part in parts)
         if not has_tool_call:
             break
 
@@ -575,7 +566,7 @@ async def run_agent(
         tool_results_for_this_turn = []
 
         for part in parts:
-            if not getattr(part, "function_call", None) or not part.function_call.name:
+            if not hasattr(part, "function_call") or not part.function_call.name:
                 continue
 
             tool_name  = part.function_call.name
@@ -700,18 +691,8 @@ async def _synthesise(ticker: str, company_name: str, tool_results: dict) -> dic
                 "Produce research briefs as valid JSON only. "
                 "No markdown fences, no explanation, just the JSON object."
             ),
-            response_mime_type="application/json",
-            max_output_tokens=8192,
         ),
     )
-
-    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-        return {
-            "error":        "synthesis_empty_response",
-            "finish_reason": str(response.candidates[0].finish_reason) if response.candidates else "no_candidates",
-            "ticker":       ticker,
-            "company_name": company_name,
-        }
 
     raw_text = response.text.strip()
 
