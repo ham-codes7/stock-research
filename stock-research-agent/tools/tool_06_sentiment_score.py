@@ -199,6 +199,7 @@ ML TEAMMATE'S SIDE:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
+import os
 import re
 import requests
 from datetime import datetime, timezone
@@ -209,7 +210,7 @@ from typing import Optional
 # This is your ML teammate's server address.
 # During hackathon on same machine: http://localhost:8001
 # If on different machines on same network: http://<their-ip>:8001
-ML_SERVER_URL    = "http://localhost:8001"
+ML_SERVER_URL    = os.getenv("ML_SERVER_URL", "http://localhost:8001")
 ML_PREDICT_PATH  = "/predict"
 ML_TIMEOUT_SECS  = 10  # how long to wait before falling back
 

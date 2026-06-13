@@ -473,15 +473,16 @@ Required structure:
   "data_quality": {{
     "tool_01_price": 0,
     "tool_02_news": 0,
-    "tool_03_sentiment": 0,
-    "tool_04_financials": 0,
-    "tool_05_peers": 0,
-    "tool_06_sec": 0,
-    "tool_07_transcript": 0
+    "tool_03_financials": 0,
+    "tool_04_peer_comparison": 0,
+    "tool_05_sec_filing": 0,
+    "tool_06_sentiment": 0,
+    "tool_07_earnings_call": 0
   }}
 }}
 
 analyst_summary must be 3-5 sentences written as an institutional analyst would write them.
+If any tool has a low-confidence score (confidence < 60) in the tool outputs summary, you MUST explicitly call out this low-confidence section inside analyst_summary, explaining that the data quality for that area is limited and should be interpreted with caution.
 risks must be a flat list of strings — one risk per string, maximum 10.
 All numeric fields must be numbers not strings. Use null for unavailable data."""
 
@@ -688,6 +689,83 @@ async def _synthesise(ticker: str, company_name: str, tool_results: dict) -> dic
     Final Claude call: convert all tool outputs into the structured research brief.
     Uses a fresh conversation — no tool definitions, just synthesis.
     """
+    import copy
+    
+    DEFAULT_BRIEF = {
+        "company_snapshot": {
+            "ticker": ticker,
+            "company_name": company_name,
+            "sector": "",
+            "industry": "",
+            "exchange": "",
+            "current_price": None,
+            "day_change_pct": None,
+            "market_cap": "",
+            "week_52_position_pct": None,
+            "beta": None
+        },
+        "valuation": {
+            "pe_trailing": None,
+            "pe_forward": None,
+            "ev_ebitda": None,
+            "price_to_sales": None,
+            "price_to_book": None,
+            "peer_median_pe_forward": None,
+            "peer_median_ev_ebitda": None,
+            "valuation_quality_label": ""
+        },
+        "financials": {
+            "currency": "",
+            "ttm_revenue_m": None,
+            "ttm_net_income_m": None,
+            "ttm_fcf_m": None,
+            "ttm_ebitda_m": None,
+            "ttm_net_margin_pct": None,
+            "latest_net_debt_m": None,
+            "revenue_yoy_growth_pct": None,
+            "revenue_trend": "",
+            "gross_margin_trend": "",
+            "operating_margin_trend": "",
+            "revenue_acceleration": ""
+        },
+        "competitive_position": {
+            "peers_identified": [],
+            "strengths_vs_peers": [],
+            "weaknesses_vs_peers": [],
+            "analyst_summary": ""
+        },
+        "sentiment": {
+            "score": None,
+            "label": "",
+            "positive_count": 0,
+            "negative_count": 0,
+            "total_headlines": 0,
+            "negative_themes": [],
+            "summary_line": ""
+        },
+        "management_signals": {
+            "transcript_date": "",
+            "dominant_tone": "",
+            "tone_interpretation": "",
+            "top_themes": [],
+            "guidance_count": 0,
+            "red_flags": [],
+            "deflections": [],
+            "summary_line": ""
+        },
+        "risks": [],
+        "analyst_summary": "",
+        "data_quality": {
+            "tool_01_price": 0,
+            "tool_02_news": 0,
+            "tool_03_financials": 0,
+            "tool_04_peer_comparison": 0,
+            "tool_05_sec_filing": 0,
+            "tool_06_sentiment": 0,
+            "tool_07_earnings_call": 0
+        }
+    }
+
     prompt = build_synthesis_prompt(ticker, company_name, tool_results)
 
     response = await asyncio.to_thread(
@@ -705,31 +783,64 @@ async def _synthesise(ticker: str, company_name: str, tool_results: dict) -> dic
         ),
     )
 
-    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-        return {
-            "error":        "synthesis_empty_response",
-            "finish_reason": str(response.candidates[0].finish_reason) if response.candidates else "no_candidates",
-            "ticker":       ticker,
-            "company_name": company_name,
+    brief = copy.deepcopy(DEFAULT_BRIEF)
+    parsed_data = {}
+
+    if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+        raw_text = response.text.strip()
+        
+        # Strip markdown fences if Claude adds them anyway
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[-1]
+            raw_text = raw_text.rsplit("```", 1)[0].strip()
+
+        try:
+            parsed_data = json.loads(raw_text)
+        except json.JSONDecodeError:
+            parsed_data = {
+                "analyst_summary": f"Synthesis JSON parsing failed. Raw output: {raw_text[:200]}"
+            }
+    else:
+        parsed_data = {
+            "analyst_summary": "No response returned from the synthesis model."
         }
 
-    raw_text = response.text.strip()
+    # Merge parsed_data into brief structure
+    if isinstance(parsed_data, dict):
+        for key, value in parsed_data.items():
+            if key in brief:
+                if isinstance(brief[key], dict) and isinstance(value, dict):
+                    # Merge sub-dictionary
+                    for subkey, subval in value.items():
+                        brief[key][subkey] = subval
+                elif isinstance(brief[key], list) and isinstance(value, list):
+                    brief[key] = value
+                else:
+                    brief[key] = value
 
-    # Strip markdown fences if Claude adds them anyway
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("\n", 1)[-1]
-        raw_text = raw_text.rsplit("```", 1)[0].strip()
+    # Automatically overlay / calculate actual data_quality scores from python tool_results
+    tool_map = {
+        "tool_01_price":           "get_price_and_metrics",
+        "tool_02_news":            "get_recent_news",
+        "tool_03_financials":      "get_financials_history",
+        "tool_04_peer_comparison": "get_peer_comparison",
+        "tool_05_sec_filing":      "get_sec_filing_summary",
+        "tool_06_sentiment":       "sentiment_score",
+        "tool_07_earnings_call":   "get_earnings_call_transcript",
+    }
+    for q_key, tool_name in tool_map.items():
+        res = tool_results.get(tool_name)
+        score = 0
+        if res and isinstance(res, dict):
+            if res.get("data") is not None:
+                score = res.get("confidence_assessment", {}).get("score_pct", 0)
+        
+        try:
+            brief["data_quality"][q_key] = int(score) if score is not None else 0
+        except (ValueError, TypeError):
+            brief["data_quality"][q_key] = 0
 
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError:
-        # Claude returned malformed JSON — return what we have with an error flag
-        return {
-            "error":        "synthesis_json_parse_failed",
-            "raw_response": raw_text[:2000],
-            "ticker":       ticker,
-            "company_name": company_name,
-        }
+    return brief
 
 
 # ══════════════════════════════════════════════════════════════════════════════
