@@ -209,7 +209,7 @@ from typing import Optional
 # This is your ML teammate's server address.
 # During hackathon on same machine: http://localhost:8001
 # If on different machines on same network: http://<their-ip>:8001
-ML_SERVER_URL    = "http://localhost:8001"
+ML_SERVER_URL    = "http://127.0.0.1:8001"
 ML_PREDICT_PATH  = "/predict"
 ML_TIMEOUT_SECS  = 10  # how long to wait before falling back
 
