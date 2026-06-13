@@ -165,6 +165,15 @@ def predict():
     if not isinstance(headlines, list):
         return jsonify({"error": "'headlines' must be a JSON array."}), 400
 
+    # ── Guard: Batch size limit ───────────────────────────────────────────────
+    if len(headlines) > 50:
+        return jsonify({"error": "Batch size exceeds maximum limit of 50 headlines."}), 400
+
+    # ── Guard: Verify all elements are strings or numbers ─────────────────────
+    for i, h in enumerate(headlines):
+        if h is None or isinstance(h, (dict, list)):
+            return jsonify({"error": f"Headline at index {i} must be a string or primitive value."}), 400
+
     # ── Empty input — valid, returns empty predictions ─────────────────────────
     if len(headlines) == 0:
         return jsonify({
@@ -174,7 +183,7 @@ def predict():
         }), 200
 
     # ── Truncate & coerce headlines ───────────────────────────────────────────
-    clean_headlines = [str(h)[:MAX_HEADLINE_LEN] for h in headlines]
+    clean_headlines = [str(h).strip()[:MAX_HEADLINE_LEN] for h in headlines]
 
     # ── Inference ─────────────────────────────────────────────────────────────
     predictions = []
