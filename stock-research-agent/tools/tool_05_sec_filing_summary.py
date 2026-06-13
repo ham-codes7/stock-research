@@ -73,7 +73,7 @@ from typing import Optional
 
 
 # SEC requires a descriptive User-Agent — failure to set this gets you blocked
-SEC_USER_AGENT = "StockResearchAgent research@example.com"
+SEC_USER_AGENT = "StockResearchAgent malleswarammoggers@gmail.com"
 SEC_BASE_URL   = "https://data.sec.gov"
 EDGAR_SEARCH   = "https://efts.sec.gov/LATEST/search-index"
 SEC_HEADERS    = {
