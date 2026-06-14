@@ -551,7 +551,10 @@ async def run_agent(
         + ". Use all 7 tools in the correct order to conduct comprehensive research."
     )
 
-    response = await asyncio.to_thread(chat.send_message, user_message)
+    response = await asyncio.wait_for(
+    asyncio.to_thread(chat.send_message, user_message),
+    timeout=60
+)
 
     for iteration in range(12):
 
@@ -613,14 +616,25 @@ async def run_agent(
             # Build a short summary for the WebSocket event
             summary = _build_tool_summary(tool_name, result)
 
-            await emit({
-                "event":       "tool_complete",
-                "tool":        tool_name,
-                "tool_number": len(tools_called),
-                "duration_ms": duration_ms,
-                "summary":     summary,
-                "timestamp":   datetime.utcnow().isoformat(),
-            })
+            if result.get("data") is None or "error" in result:
+                err_msg = result.get("error")
+                if not err_msg:
+                    err_msg = result.get("validation_results", {}).get("error_message") or "Tool execution failed"
+                await emit({
+                    "event":       "error",
+                    "tool":        tool_name,
+                    "message":     err_msg,
+                    "timestamp":   datetime.utcnow().isoformat(),
+                })
+            else:
+                await emit({
+                    "event":       "tool_complete",
+                    "tool":        tool_name,
+                    "tool_number": len(tools_called),
+                    "duration_ms": duration_ms,
+                    "summary":     summary,
+                    "timestamp":   datetime.utcnow().isoformat(),
+                })
 
             # ── Prepare tool_result for Claude ────────────────────────────────
             # We don't pass the full result back to Claude — just the key data
@@ -638,9 +652,10 @@ async def run_agent(
 
         # Send all tool results back to Gemini and get next response
         if tool_results_for_this_turn:
-            response = await asyncio.to_thread(
-                chat.send_message, tool_results_for_this_turn
-            )
+            response = await asyncio.wait_for(
+                asyncio.to_thread(chat.send_message, tool_results_for_this_turn),
+                timeout=60
+)
         else:
             break
 
@@ -690,7 +705,8 @@ async def _synthesise(ticker: str, company_name: str, tool_results: dict) -> dic
     """
     prompt = build_synthesis_prompt(ticker, company_name, tool_results)
 
-    response = await asyncio.to_thread(
+    response = await asyncio.wait_for(
+    asyncio.to_thread(
         client.models.generate_content,
         model=MODEL,
         contents=prompt,
@@ -703,7 +719,7 @@ async def _synthesise(ticker: str, company_name: str, tool_results: dict) -> dic
             response_mime_type="application/json",
             max_output_tokens=8192,
         ),
-    )
+    ), timeout=90)
 
     if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
         return {
